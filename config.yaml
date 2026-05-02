@@ -1,0 +1,95 @@
+seeds: [0, 1, 2, 3, 4]
+deterministic: true
+
+data:
+  physionet_root: "data/physionet2016"
+  pascal_root: "data/pascal_setB"
+  cache_dir: "data/cache"
+  num_workers: 4
+
+
+audio:
+  sample_rate: 22050
+  segment_seconds: 5            # waveform input length seen by the model
+  segment_samples: 110250       # 5 * 22050
+  segmentation:
+    clip_seconds: 10            # segmentation window length
+    hop_seconds: 5              # 5 s overlap => hop = 5 s
+    pad_short: true             # zero-pad recordings shorter than clip_seconds
+  mel:
+    n_fft: 2048
+    hop_length: 512
+    n_mels: 128
+    fmin: 20.0
+    fmax: 11025.0               # Nyquist for 22050 Hz
+    power: 2.0
+    log_offset: 1.0e-6
+    target_size: [224, 224]     # final resize for ViT input
+
+
+model:
+  vit:
+    img_size: 224
+    patch_size: 16
+    in_channels: 1
+    embed_dim: 192
+    depth: 6
+    num_heads: 8
+    mlp_ratio: 2.0              # paper: Dense(2*192) -> Dense(192)
+    dropout: 0.1
+    attn_dropout: 0.0
+  cnn1d:
+    in_channels: 1
+    input_length: 110250
+    channels: [64, 128, 256]
+    kernel_size: 16
+    stride: 4
+    pool_size: 4                # MaxPool after blocks 1 and 2 (Fig. 1)
+    dense_units: 64             # final compact temporal feature dim
+  fusion_head:
+    hidden_dim: 192
+    dropout: 0.5
+    num_classes: 1              # binary normal/abnormal, single sigmoid logit
+
+
+training:
+  epochs: 200
+  batch_size: 32
+  optimizer: "adamw"
+  learning_rate: 3.0e-4
+  weight_decay: 1.0e-4
+  scheduler: "cosine_warm_restarts"
+  cosine_T0: 20                 # restart period in epochs
+  cosine_Tmult: 2
+  early_stopping:
+    monitor: "val_loss"
+    patience: 20
+    mode: "min"
+  grad_clip_norm: 1.0
+  amp: true                     # mixed precision when CUDA available
+  class_weights:
+    auto: true                  # compute from training labels
+    # if auto=false, fall back to:
+    normal: 1.0
+    abnormal: 1.0
+
+
+smote:
+  warmup_epochs: 30             # train backbone end-to-end first
+  sampling_strategy: "auto"     # imblearn default: balance to majority count
+  k_neighbors: 5
+  freeze_branches_after_warmup: true
+
+
+domain_generalization:
+  pascal_train_fraction: 0.8    # 80/20 patient-level split on PASCAL Set B
+  finetune_epochs: 50
+  finetune_lr: 1.0e-4
+  finetune_only_head: true      # only the 192-unit dense + sigmoid trained
+
+
+logging:
+  output_dir: "runs"
+  save_top_k: 1                 # keep only best checkpoint per run
+  log_every_n_steps: 50
+  tensorboard: true
